@@ -1,0 +1,148 @@
+import paramiko
+import time
+import sys
+from kivy.app import App
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.label import Label
+from kivy.uix.textinput import TextInput
+from kivy.uix.button import Button
+from kivy.uix.spinner import Spinner
+
+class SSHApp(App):
+    def build(self):
+        self.layout = BoxLayout(orientation='vertical', spacing=10, padding=10)
+
+        # Criação de um título para o aplicativo
+        self.title_label = Label(text=" WHG Monitor de Transceptores", font_size=20)
+        self.layout.add_widget(self.title_label)
+
+        # Widget para escolher o host
+        self.host_label = Label(text="Escolha o host:")
+        self.layout.add_widget(self.host_label)
+        self.host_spinner = Spinner(text="Selecione o host", size_hint=(1, None), height=30)
+        self.layout.add_widget(self.host_spinner)
+
+        # Widget para inserir a porta
+        self.port_input = TextInput(hint_text="Porta (ex: 22)", size_hint=(1, None), height=30)
+        self.layout.add_widget(self.port_input)
+
+        # Widget para escolher o comando
+        self.command_label = Label(text="Escolha o comando:")
+        self.layout.add_widget(self.command_label)
+        self.command_spinner = Spinner(text="Selecione o comando", size_hint=(1, None), height=30)
+        self.layout.add_widget(self.command_spinner)
+
+        # Botão para executar o comando SSH
+        self.submit_button = Button(text="Executar", size_hint=(1, None), height=40, on_press=self.execute_ssh)
+        self.layout.add_widget(self.submit_button)
+
+        # Área de saída para exibir os resultados
+        self.output_label = Label(text="", halign='left', font_size=14)
+        self.layout.add_widget(self.output_label)
+
+        # Botão para sair do aplicativo
+        self.exit_button = Button(text="Sair", size_hint=(1, None), height=40, on_press=self.exit_app)
+        self.layout.add_widget(self.exit_button)
+
+        # Preenche os widgets com os valores iniciais
+        self.fill_host_spinner()
+        self.fill_command_spinner()
+
+        return self.layout
+
+    def fill_host_spinner(self):
+        # Preenche o spinner de host com os valores da lista 'hosts'
+        for host in hosts:
+            self.host_spinner.values.append(host['name'])
+
+    def fill_command_spinner(self):
+        # Preenche o spinner de comando com os valores da lista 'commands'
+        for command in commands:
+            self.command_spinner.values.append(command)
+
+    def execute_ssh(self, instance):
+        # Obtém as informações selecionadas pelo usuário
+        selected_host_name = self.host_spinner.text
+        selected_host = next((host for host in hosts if host['name'] == selected_host_name), None)
+
+        if selected_host is None:
+            self.output_label.text = "Host não encontrado."
+            return
+
+        port_number = self.port_input.text
+        selected_command = self.command_spinner.text
+
+        # Executa o comando SSH e obtém a saída
+        output = connect_and_execute_command(selected_host['host'], selected_host['port'], selected_host['username'],
+                                             selected_host['password'], selected_command)
+        rx_power = extract_power_info(output, "RX Power(dBM)")
+        tx_power = extract_power_info(output, "TX Power(dBM)")
+
+        # Exibe a saída no widget de saída
+        self.output_label.text = f"RX Power: {rx_power}\nTX Power: {tx_power}"
+
+    def exit_app(self, instance):
+        # Função para sair do aplicativo
+        sys.exit(0)
+
+def connect_and_execute_command(host, port, username, password, command):
+    # Função para conectar e executar comandos SSH
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    try:
+        client.connect(hostname=host, port=port, username=username, password=password)
+        channel = client.invoke_shell()
+        channel.send('N\n')
+        channel.recv(1024)
+        channel.send(command + '\n')
+        time.sleep(2)
+
+        output = b""
+        while channel.recv_ready():
+            output += channel.recv(1024)
+
+        output = output.decode(errors='ignore')
+        return output
+    except Exception as e:
+        return f"Erro ao conectar e executar o comando: {e}"
+    finally:
+        client.close()
+
+def extract_power_info(output, keyword):
+    # Função para extrair informações de potência da saída do comando SSH
+    start_index = output.find(keyword)
+    if start_index == -1:
+        return "Informação não encontrada"
+
+    end_index = output.find("\n", start_index)
+    power_info = output[start_index:end_index]
+    return power_info.strip()
+
+# Lista de hosts e comandos
+hosts = [
+    {
+        'name': 'Cascavel',
+        'host': '45.6.218.6',
+        'port': 1965,
+        'username': 'whg.noc',
+        'password': '#WhG2011'
+    },
+    {
+        'name': 'Eusebio',
+        'host': 'host2.example.com',
+        'port': 22,
+        'username': 'username2',
+        'password': 'password2'
+    }
+    # Adicione mais hosts aqui conforme necessário
+]
+
+commands = [
+    "display transceiver interface XGigabitEthernet 0/0/21 verbose",
+    "display transceiver interface GigabitEthernet 0/0/22 verbose",
+    # Adicione mais comandos aqui conforme necessário
+]
+
+if __name__ == '__main__':
+    SSHApp().run()
